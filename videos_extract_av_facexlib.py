@@ -39,6 +39,8 @@ parser.add_argument('--resume_file', type=str, default=None,
                     help='resume processed file')
 parser.add_argument('--failed_file', type=str, default=None,
                     help='only processed failed file')
+parser.add_argument('--cache', action='store_true',
+                    help='whether cache file')
 parser.add_argument('--ext', type=str, default='jpg', choices=['jpg', 'png'],
                     help='Extension for image frames')
 args = parser.parse_args()
@@ -175,14 +177,17 @@ def video_extract(output_dir, file_path, job_id):
                         # cv2.imwrite(output_path, cropped_img)
                         tensor_image = img[y1:y2, x1:x2, :].permute(2, 0, 1).flip(0)
                         meta_file.write(name+'\n')
-                        h5_cache.create_dataset(
-                            name, data=tensor_image, maxshape=tensor_image.shape,
-                            compression='lzf', shuffle=True, track_times=False,)
-                        os.remove(output_path)
+                        if args.cache:
+                            h5_cache.create_dataset(
+                                name, data=tensor_image, maxshape=tensor_image.shape,
+                                compression='lzf', shuffle=True, track_times=False,)
+                            os.remove(output_path)
                     except Exception as e:
                         logging.error(f"{output_path} {e}")
                         fail_logger.info(file_path)
-                        return        
+                        return 
+        if not args.cache:
+            os.remove(Path(output_folder) / 'cache.h5')
     except Exception as e:
         logging.error(f"{output_folder} {e}  at caching")
         fail_logger.info(file_path)
