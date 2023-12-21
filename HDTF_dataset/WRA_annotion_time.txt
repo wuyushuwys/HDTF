@@ -100,7 +100,7 @@ PatRoberts.mp4 00:01-00:25
 PaulRyan0.mp4 00:30-00:58 06:00-07:00
 PaulRyan1.mp4 00:43-01:00 02:40-02:55
 PeteHoekstra.mp4 00:05-00:22 01:44-02:20
-PeterKing.mp4 00:20-00:40 
+PeterKing.mp4 00:17-00:30
 PeterRoskam0.mp4 03:00-03:40
 PeterRoskam1.mp4 00:36-01:15 01:48-02:35
 RandPaul0.mp4 00:01-03:05

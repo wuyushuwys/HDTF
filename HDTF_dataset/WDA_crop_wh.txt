@@ -123,7 +123,7 @@ LloydDoggett0_0.mp4 379 489 0 489
 LloydDoggett1_0.mp4 501 779 0 779
 LucilleRoybal-Allard_0.mp4 591 806 37 806
 LucyMcBath_0.mp4 559 728 0 728
-MaggieHassan_0.mp4 389 776 0 776
+MaggieHassan_0.mp4 360 512 60 512
 MarciaFudge_0.mp4 602 800 0 800
 MarkWarner1_0.mp4 579 726 0 726
 MarkWarner1_1.mp4 567 743 0 743
@@ -132,7 +132,7 @@ MarkWarner_0.mp4 397 520 0 520
 MartinHeinrich_0.mp4 586 857 0 857
 MattCartwright_0.mp4 455 481 0 481
 MazieHirono0_0.mp4 368 492 0 492
-MazieHirono1_0.mp4 83 1134 0 1134
+MazieHirono1_0.mp4 380 512 10 512
 MichaelBennet_0.mp4 393 463 0 463
 MichelleLujanGrisham_0.mp4 667 676 37 676
 MichelleObama_0.mp4 341 1017 0 1017
