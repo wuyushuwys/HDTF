@@ -133,6 +133,7 @@ MartinHeinrich_0.mp4 586 857 0 857
 MattCartwright_0.mp4 455 481 0 481
 MazieHirono0_0.mp4 368 492 0 492
 MazieHirono1_0.mp4 380 512 10 512
+MazieHirono1_1.mp4 380 512 10 512
 MichaelBennet_0.mp4 393 463 0 463
 MichelleLujanGrisham_0.mp4 667 676 37 676
 MichelleObama_0.mp4 341 1017 0 1017
