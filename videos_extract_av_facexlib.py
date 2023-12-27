@@ -1,4 +1,5 @@
 import argparse
+from click import FileError
 import ffmpeg
 import os
 import logging
@@ -15,9 +16,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from facexlib.detection import init_detection_model
-from utils import ImageFolder, get_largest_face
+from utils import ImageFolder, get_largest_face, get_center_face, EMA
 
 import h5py
+import numpy as np
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -39,32 +41,51 @@ parser.add_argument('--resume_file', type=str, default=None,
                     help='resume processed file')
 parser.add_argument('--failed_file', type=str, default=None,
                     help='only processed failed file')
+parser.add_argument('--face_size', type=int, default=512,
+                    help='face_size')
 parser.add_argument('--cache', action='store_true',
                     help='whether cache file')
+parser.add_argument('--landmark_alignment', '-la',action='store_true',
+                    help='landmark alignment')
 parser.add_argument('--ext', type=str, default='jpg', choices=['jpg', 'png'],
                     help='Extension for image frames')
 args = parser.parse_args()
 
 EXT = args.ext
 
-logging.basicConfig(filename=f'extract_av_{int(time())}.log', filemode='w', level=logging.INFO, format='%(asctime)s::%(levelname)s::%(lineno)d::%(message)s')
+index = int(time())
+
+logging.basicConfig(filename=f'extract_av_{index}.log', filemode='w', level=logging.INFO, format='%(asctime)s::%(levelname)s::%(lineno)d::%(message)s')
 
 record_logger = logging.getLogger("processed_file")
 record_logger.setLevel(logging.INFO)
-record_handler = logging.FileHandler(filename=f'processed_file_{int(time())}.log', mode='w')
+record_handler = logging.FileHandler(filename=f'processed_file_{index}.log', mode='w')
 record_handler.setLevel(logging.INFO)
 record_handler.setFormatter(logging.Formatter('%(message)s'))
 record_logger.addHandler(record_handler)
 
 fail_logger = logging.getLogger("failed_file")
 fail_logger.setLevel(logging.INFO)
-fail_handler = logging.FileHandler(filename=f'failed_file_{int(time())}.log', mode='w')
+fail_handler = logging.FileHandler(filename=f'failed_file_{index}.log', mode='w')
 fail_handler.setLevel(logging.INFO)
 fail_handler.setFormatter(logging.Formatter('%(message)s'))
 fail_logger.addHandler(fail_handler)
 
-face_detectors = [init_detection_model(model_name='retinaface_resnet50', half=True, device=f'cuda:{idx}') for idx in range(args.num_workers)]
+check_logger = logging.getLogger("check_file")
+check_logger.setLevel(logging.INFO)
+check_handler = logging.FileHandler(filename=f'check_file_{index}.log', mode='w')
+check_handler.setLevel(logging.INFO)
+check_handler.setFormatter(logging.Formatter('%(message)s'))
+check_logger.addHandler(check_handler)
 
+face_detectors = [init_detection_model(model_name='retinaface_resnet50', half=True, device=f'cuda:{idx}') for idx in range(args.num_workers)]
+face_template = np.array([[192.98138, 239.94708],
+                          [318.90277, 240.1936],
+                          [256.63416, 314.01935],
+                          [201.26117, 371.41043],
+                          [313.08905, 371.15118]])
+face_size = (args.face_size, args.face_size)
+face_template = face_template * (face_size[0] / 512.0)
 
 def video_extract(output_dir, file_path, job_id):
 
@@ -114,13 +135,13 @@ def video_extract(output_dir, file_path, job_id):
         return
     try:
         streams.audio.output(os.path.join(output_folder, f'audio.wav'),
-                             **{"qscale:a": 1}).run(overwrite_output=True, quiet=True)
+                             **{"qscale:a": 1, 'ar': 16000}).run(overwrite_output=True, quiet=True)
     except ffmpeg.Error as e:
         logging.error("Error in audio extraction")
         logging.error(e.stderr.decode('utf-8'))
         fail_logger.info(file_path)
         return
-    
+    ema_landmark = None
     try:
         logging.info(f"Caching images at {Path(output_folder) / 'cache.h5'}")
         logging.info(f"Write meta data to {Path(output_folder) / 'meta_data.txt'}")
@@ -131,12 +152,12 @@ def video_extract(output_dir, file_path, job_id):
             dataloader = DataLoader(dataset, batch_size=bsz, shuffle=False, num_workers=4)
             
             face_detector = face_detectors[pid]
-            
+            all_landmarks = []
             for data in dataloader:
                 names, imgs = data['name'], data['img']
                 try: 
                     with torch.no_grad():
-                        batched_bboxes, _ = face_detector.batched_detect_faces(imgs)
+                        batched_bboxes, batched_landmarks = face_detector.batched_detect_faces(imgs)
                 except Exception as e:
                     logging.error(f"{output_folder} {e} at inference")
                     fail_logger.info(file_path)
@@ -144,48 +165,83 @@ def video_extract(output_dir, file_path, job_id):
                 
                 b, h, w, c = imgs.size()
                 batched_det_faces = []
+                batched_det_landmarks = []
                 try:
-                    for bboxes in batched_bboxes:
+                    for bboxes, landmarks in zip(batched_bboxes, batched_landmarks):
                         det_faces = []
+                        det_landmarks = []
                         if len(bboxes) == 0:
                             batched_det_faces.append(None)
+                            batched_det_landmarks.append(None)
                         else:
-                            for bbox in bboxes:
+                            for bbox, landmark in zip(bboxes, landmarks):
                                 det_faces.append(bbox[0:5])
-                            det_faces, _ = get_largest_face(det_faces, h=h, w=w)
+                                det_landmarks.append(np.array(np.split(landmark, 5, axis=0)))
+                            det_faces, face_idx = get_center_face(det_faces, h=h, w=w)
                             batched_det_faces.append(det_faces.astype(int).tolist()[:4])
+                            batched_det_landmarks.append(det_landmarks[face_idx])
                 except Exception as e:
                     logging.error(f"failed at {output_path} at bbox extraction")
+                else:
+                    all_landmarks.extend(batched_det_landmarks)
                 
                 
-                for name, bbox, img in zip(names, batched_det_faces, imgs):
+                for name, bbox, landmark, img in zip(names, batched_det_faces, batched_det_landmarks, imgs):
                     output_path = os.path.join(output_folder, f'{name}.{EXT}')  # override original image
                     if bbox:
                         x1, y1, x2, y2 = bbox
+                        if args.landmark_alignment:
+                            if np.all(y1 < landmark[:, 0] < y2) and np.all(x1 < landmark[:, 1] < x2):
+                                if ema_landmark is not None:
+                                    ema_landmark.update(landmark)
+                                else:
+                                    ema_landmark = EMA(landmark)
+                            else:    
+                                if ema_landmark is None:
+                                    logging.warning(f"{output_path} contains bad landmark. Please check or reprocess")
+                                    check_logger.info(file_path)
+                                    fail_logger.info(file_path)
+                                    raise ValueError   
+                                logging.warning(f"Bad landmark detection. Using ema landmark {output_path}")
+                                check_logger.info(file_path)
+                            
                         if x1 >= x2:
                             x1, x2 = 0, img.size(2)
                             logging.error(f"{output_path} Bad detection {img.shape} {(x1, y1, x2, y2)}")
                         if y1 >= y2:
                             y1, y2 = 0, img.size(1)
                             logging.error(f"{output_path} Bad detection {img.shape} {(x1, y1, x2, y2)}")
+                        
                     else:
                         logging.error(f"{output_path} failed to find face. Please check videos")
                         fail_logger.info(file_path)
-                        return
+                        raise ValueError   
                     try:
-                        # cropped_img = img.numpy()[y1:y2, x1:x2]
-                        # cv2.imwrite(output_path, cropped_img)
-                        tensor_image = img[y1:y2, x1:x2, :].permute(2, 0, 1).flip(0)
+                        if args.landmark_alignment:
+                            border_mode = cv2.BORDER_CONSTANT
+                            affine_matrix = cv2.estimateAffinePartial2D(landmark, face_template, method=cv2.LMEDS)[0]
+                            cropped_face = cv2.warpAffine(img.numpy(), affine_matrix, face_size, borderMode=border_mode, borderValue=(135, 133, 132))
+                            tensor_image = torch.tensor(cropped_face).permute(2, 0, 1).flip(0)
+                        else:
+                            cropped_face = img.numpy()[y1:y2, x1:x2, :]
+                            tensor_image = img[y1:y2, x1:x2, :].permute(2, 0, 1).flip(0)
                         meta_file.write(name+'\n')
                         if args.cache:
                             h5_cache.create_dataset(
                                 name, data=tensor_image, maxshape=tensor_image.shape,
                                 compression='lzf', shuffle=True, track_times=False,)
                             os.remove(output_path)
+                        else:
+                            cv2.imwrite(output_path, cropped_face)
                     except Exception as e:
                         logging.error(f"{output_path} {e}")
                         fail_logger.info(file_path)
-                        return 
+                        raise FileError(output_path)    
+            # if args.landmark_alignment:
+            #     normlized_landmark = np.array(all_landmarks)/face_size[0]
+            #     if np.any(normlized_landmark.std(axis=0) > 0.1):
+            #         check_logger.info(file_path)
+            #         logging.warning(f"{output_path} landmarks might contain bad detection. Please check or reprocess")
         if not args.cache:
             os.remove(Path(output_folder) / 'cache.h5')
     except Exception as e:
@@ -210,7 +266,6 @@ def video_extract(output_dir, file_path, job_id):
     #                 compression='lzf', shuffle=True, track_times=False,
     #             )
     #             os.remove(img)
-        
 
 
 def mp_handler(job):
@@ -224,7 +279,6 @@ def mp_handler(job):
 
 if __name__ == '__main__':
     os.makedirs(os.path.join(args.output_dir), exist_ok=True)
-    
     if args.failed_file:
         filelist = []
         with open(args.failed_file, 'r') as f:

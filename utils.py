@@ -1,5 +1,6 @@
-import math
+import copy
 import cv2
+import math
 import os
 import h5py
 
@@ -107,19 +108,38 @@ class Hdf5:
                     track_times=False,
                     # track_order=False,
                 )
-
     def get(self, key):
-        if not self.file:
+        if self.file is None:
             self.file = h5py.File(self.fname, 'r', libver='latest')
-        if '/' in key:
-            value = self.file
-            for k in key.split('/'):
-                value = value[k]
-        else:
-            value = self.file[key]
-        return value
+        return self.file[key]
+        
+            
 
     @property
     def keys(self):
         with h5py.File(self.fname, mode='r', libver='latest') as f:
             return list(f.keys())
+
+
+class EMA:
+
+    def __init__(self, value, decay=0.9):
+        self._avg_value = copy.deepcopy(value)
+        self.n_average = 1
+        self.decay = decay
+    
+    def update(self, new_value):
+        decay = self.decay
+        # decay = 2/(self.n_average+1)
+        # self._avg_value = self._avg_value + (new_value - self._avg_value) / (self.n_average + 1)
+        self._avg_value =  decay * self._avg_value + new_value * (1 - decay)
+
+        self.n_average += 1
+
+    @property
+    def avg_value(self):
+        return self._avg_value
+    
+    @property
+    def recent(self):
+        return 1 / (1-self.decay)
